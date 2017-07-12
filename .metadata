@@ -1,0 +1,8 @@
+{
+  "name" : "GTGBuildTools",
+  "friendlyName": "Painting Tools",
+  "version": "1",
+  "author": "GTG3000 aka Lady Nihil",
+  "description": "Allows crafting of copy tool and paint tool. \n ^#00a0ff;Copy tool^reset; : cycle mode by tapping shift. Preview copied image by holding shift. \n ^#00a0ff;Modes^reset; : Select/Copy/Paste/Flip \n ^#00a0ff;Paint tool^reset; : cycle mode by shift+LMB/RMB, enter mask mode by double-tapping shift, erase selection and mask by holding shift. \n ^#00a0ff;Normal modes^reset; : Paint/Select colour/Select size/Fill selection/Replace colour in selection \n ^#ffa000;Mask modes^reset; : Select/Paint Mask/Colour to mask/Colour from mask/Fill mask/Invert mask",
+  "requires": []
+}
