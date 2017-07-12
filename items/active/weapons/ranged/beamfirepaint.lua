@@ -438,13 +438,14 @@ function BeamFire:paint_2_2(fireMode) -- draw mask
 		local value = (fireMode == "primary") and true or nil
 		for i =  aim[1]+self.sizes[storage.sizeIndex][1],aim[1]+self.sizes[storage.sizeIndex][2] do
 			local si = tostring(i)
+			if not storage.maskData[si] then storage.maskData[si] = {} end
 			for j = aim[2]+self.sizes[storage.sizeIndex][1],aim[2]+self.sizes[storage.sizeIndex][2] do
 				if self:inSelection({i,j}) then
 					local sj = tostring(j)
 					storage.maskData[si][sj] = value
 				end
 			end
-			if next(storage.maskData[si]) == nil then storage.maskData[si] = nil end
+			if storage.maskData[si] and next(storage.maskData[si]) == nil then storage.maskData[si] = nil end
 		end
 		if next(storage.maskData)==nil then storage.maskData = false end
 	end
@@ -496,7 +497,7 @@ function BeamFire:paint_2_4(fireMode) -- colour from mask
 					local sj = tostring(j)
 					if storage.maskData[si] then  
 						storage.maskData[si][sj] = nil
-						if next(storage.maskData[si]) == nil then storage.maskData[si] = nil end
+						if storage.maskData[si] and next(storage.maskData[si]) == nil then storage.maskData[si] = nil end
 					end
 				end
 			end
@@ -530,7 +531,7 @@ function BeamFire:paint_2_5(fireMode) -- fill/empty mask
 					local sj = tostring(j)		
 					if storage.maskData[si] then
 						storage.maskData[si][sj] = nil
-						if next(storage.maskData[si]) == nil then storage.maskData[si] = nil end
+						if storage.maskData[si] and next(storage.maskData[si]) == nil then storage.maskData[si] = nil end
 					end
 				end
 			end
@@ -554,7 +555,7 @@ function BeamFire:paint_2_6(fireMode) -- invert mask
 				if not storage.maskData[si] then storage.maskData[si] = {} end
 				if not storage.maskData[si][sj] then storage.maskData[si][sj] = true else storage.maskData[si][sj] = nil end
 			end	
-			if next(storage.maskData[si]) == nil then storage.maskData[si] = nil end
+			if storage.maskData[si] and next(storage.maskData[si]) == nil then storage.maskData[si] = nil end
 		end
 		if next(storage.maskData)==nil then storage.maskData = false end
 	end
