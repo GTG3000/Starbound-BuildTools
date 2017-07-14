@@ -281,7 +281,8 @@ function BeamFire:preview()
 			for j = storage.points[2], storage.points[4] do
 			
 				local posX = BeamFire:flipX(i,sizeX,storage.flipX)
-				local posY = BeamFire:flipY(j,sizeY,storage.flipY)
+				local posY = BeamFire:flipY(j,sizeY,storage.flipY)	
+				local posYp = BeamFire:flipY(j+1,sizeY,storage.flipY)
 							
 				if posX > 0 
 					and posY > 0
@@ -295,7 +296,9 @@ function BeamFire:preview()
 						tonumber(cString:sub(5,6),16),
 						255
 					}]]
-					if storage.storedData[posX][posY+1] ~= cColour then --optimisation, spawn one particle for a row of same values
+					if storage.storedData[posX][posYp] ~= cColour 
+						or (storage.flipY and posYp > BeamFire:flipY(storage.points[4]+2,sizeY,storage.flipY) or posYp > BeamFire:flipY(storage.points[4],sizeY,storage.flipY))
+					then --optimisation, spawn one particle for a row of same values
 						local cString = self.colours[self.rValue[cColour+1]]
 						if cColour > 0 then
 							DRAW = true
