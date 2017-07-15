@@ -83,11 +83,18 @@ function BeamFire:update(dt, fireMode, shiftHeld)
 	if self.renderTimer == 0 then
 		self.renderTimer = self.renderTime
 		self:renderMask()
+		if self.cursorDisplay then
+			self:renderCursorText(beamEnd)
+		end
 	end
 	
 	self:render(beamEnd)
 	
-	world.sendEntityMessage(activeItem.ownerEntityId(),"setBar","PaintToolBar",storage.mode/self.modeMax[storage.modeMask], storage.modeMask == 1 and {0,160,255,255} or {255,160,0,255})
+	local a_c = (self.shiftHoldComplete or self.shiftHoldSupressed or self.holdTimer == 0) and 0 or math.floor(255 * self.holdTimer / self.holdDelay)
+	
+	world.sendEntityMessage(activeItem.ownerEntityId(),"setBar","PaintToolBar",storage.mode/self.modeMax[storage.modeMask], storage.modeMask == 1 and {a_c,160,255,255} or {255,160,a_c,255})
+	--world.sendEntityMessage(activeItem.ownerEntityId(),"setBar","randombar",0,{255,255,255,255})
+	--world.sendEntityMessage(activeItem.ownerEntityId(),"setBar","PaintToolBar2",self.holdTimer/self.holdDelay, self.shiftHoldSupressed and {255,0,160,255} or (self.shiftHoldComplete and {255,255,160,255} or {0,255,160,255}))
 	
 	sb.setLogMap("^pink;TOOLSTATE^reset;",self.modeFriendly[storage.modeMask][storage.mode])
 	
@@ -95,7 +102,7 @@ function BeamFire:update(dt, fireMode, shiftHeld)
 	if not shiftHeld then
 		BeamFire["paint_"..storage.modeMask.."_"..storage.mode](self, fireMode) --do the mode
 		
-		if self.holdTimer > 0 and not self.shiftHoldSupressed then	--set up doubletapping, if shift was previously held and no mouse buttons were pressed
+		if self.holdTimer > 0 and not self.shiftHoldSupressed and not self.shiftHoldComplete then	--set up doubletapping, if shift was previously held and no mouse buttons were pressed
 			self.doubletapTimer = self.tapDelay
 		end
 		self.doubletapTimer = math.max(self.doubletapTimer-dt,0)
@@ -110,9 +117,17 @@ function BeamFire:update(dt, fireMode, shiftHeld)
 			self.doubletapTimer = 0
 			storage.modeMask = storage.modeMask % 2 + 1
 			storage.mode, storage.altMode = storage.altMode, storage.mode
+			self.b_d = false
+			self.b_u = false
+			self.b_l = false
+			self.b_r = false
 		else	-- don't want to do other stuff at the same time as doubletapping. maybe add cooldown?
 			if fireMode == "primary" or fireMode == "alt" then --supress shift holding trigger if modes were cycled, cycle modes as long as you like
-				self.shiftHoldSupressed = true
+				self.shiftHoldSupressed = true	
+				self.b_d = false
+				self.b_u = false
+				self.b_l = false
+				self.b_r = false
 			end
 			
 			if fireMode == "primary"
@@ -163,6 +178,34 @@ function BeamFire:render(endPos)
 	local pos1 = vec2.add(endPos,{self.sizes[storage.sizeIndex][1],self.sizes[storage.sizeIndex][1]})-- making a rectangle. sizes[x][1] is the upper right corner offset, sizes[x][2] is the lower left corner offset
 	local pos2 = vec2.add(endPos,{self.sizes[storage.sizeIndex][2]+1,self.sizes[storage.sizeIndex][2]+1})
 	self:renderBox({pos1[1],pos1[2],pos2[1],pos2[2]},chains,"?setcolor="..self.colours[storage.colourIndex])
+	
+	
+	local s_rect = {} --rectangle for highlighting selection modification
+	
+	--has to change if the coursor is over one of the edges or corners	
+	if storage.points then
+		if self.b_r and self.b_u then
+			s_rect = {storage.points[3]-1,storage.points[4]-1,storage.points[3],storage.points[4]}
+		elseif self.b_r and self.b_d then
+			s_rect = {storage.points[3]-1,storage.points[2],storage.points[3],storage.points[2]+1}
+		elseif self.b_l and self.b_u then
+			s_rect = {storage.points[1],storage.points[4]-1,storage.points[1]+1,storage.points[4]}
+		elseif self.b_l and self.b_d then
+			s_rect = {storage.points[1],storage.points[2],storage.points[1]+1,storage.points[2]+1}
+		elseif self.b_r then
+			s_rect = {storage.points[3]-1,storage.points[2],storage.points[3],storage.points[4]}
+		elseif self.b_l then
+			s_rect = {storage.points[1],storage.points[2],storage.points[1]+1,storage.points[4]}
+		elseif self.b_u then
+			s_rect = {storage.points[1],storage.points[4]-1,storage.points[3],storage.points[4]}
+		elseif self.b_d then
+			s_rect = {storage.points[1],storage.points[2],storage.points[3],storage.points[2]+1}
+		end
+	end
+	
+	if #s_rect>0 then
+		self:renderBox(s_rect,chains,"?setcolor=FFFF00")
+	end
 	
 	if storage.points then
 		self:renderBox(storage.points,chains,"?setcolor=ffa000;")
@@ -250,17 +293,86 @@ function BeamFire:renderMask()
 			destructionTime = self.renderTime/4	
 		}
 	}
+	
+	--[[
+		Optimised particle renderer.
+		Turns columns of particles into one stretched particle to improve fps by limiting their number.
+		Very effective with the one-colour masks
+		> Iterate over the mask table and build a max and min to be able to decisively see when the next value is not a true
+		> Iterate using the min and max. Take first true values' y position, iterate until the next value is not true.
+		> Push a particle with an average y of start and end, stretch vertically to fill the entire gap
+	]]
+	
+	local iMin,iMax,jMin,jMax = 10000,0,10000,0 --magic numbers. Let's hope there's never a max value over 10000
+	
 	for i,temp_table in pairs(storage.maskData) do
+		local iT = tonumber(i)
+		if iT > iMax then iMax = iT end
+		if iT < iMin then iMin = iT end
 		for j,v in pairs(temp_table) do
-			if v then
-				DRAW = true
-				local lParticle = copy(particle)
-				lParticle.specification.position = {tonumber(i) - storage.points[1] + 0.5,tonumber(j)-storage.points[2] + 0.5}
-				table.insert(pixel.actionOnReap,lParticle)
+			local jT = tonumber(j)
+			if jT > jMax then jMax = jT end
+			if jT < jMin then jMin = jT end
+		end
+	end
+	
+	local jStart = 0
+	local jReset = true
+	local multiplier = 1
+	
+	for i = iMin,iMax do
+		jReset = true
+		for j = jMin,jMax do
+			local iS = tostring(i)
+			if storage.maskData[iS] then
+				local jS = tostring(j)
+				if jReset then --getting new line position after pushing render
+					jStart = j
+					multiplier = 1
+					jReset = false
+				end 
+				if storage.maskData[iS][jS] then
+					if storage.maskData[iS][tostring(j+1)] then
+						multiplier = multiplier + 1
+					else
+						DRAW = true
+						jReset = true
+						local lParticle = copy(particle)
+						lParticle.specification.image = lParticle.specification.image.."?scale=1;"..multiplier..";"
+						lParticle.specification.position = {i - storage.points[1] + 0.5,(j+jStart)/2-storage.points[2] + 0.5}
+						table.insert(pixel.actionOnReap,lParticle)					
+					end
+				else
+					jReset = true
+				end
 			end
 		end
 	end
+	
 	if DRAW then world.spawnProjectile("invisibleprojectile",world.xwrap({storage.points[1],storage.points[2]}), activeItem.ownerEntityId(), {0, 0}, true, pixel) end
+end
+
+function BeamFire:renderCursorText(pos)
+	local textParticle ={
+		timeToLive = 0,
+		speed = 0,
+		damageTeam = {type = "passive"},
+		damageType = "NoDamage",
+		actionOnReap = {{
+			action = "particle",
+			damageTeam = {type = "passive"},
+			specification = {
+				timeToLive = self.renderTime,
+				layer = "front",
+				fullbright = true,
+				["type"] = "text",
+				size = 0.75,
+				text = "^shadow;"..self.cursorDisplay.."^reset;",
+				color = {255, 160, 0, 255}
+			}}
+		}
+	}
+	world.spawnProjectile("invisibleprojectile",world.xwrap({pos[1],pos[2]+1.5}),activeItem.ownerEntityId(),{0,0},false,textParticle)
 end
 
 function BeamFire:inSelection(pos,useMask)
@@ -382,47 +494,90 @@ end
 
 function BeamFire:paint_2_1(fireMode) -- select area
 	local pos = activeItem.ownerAimPosition()
-	if not storage.points then storage.points = {pos[1],pos[2],pos[1],pos[2]} end
+	pos[1] = math.floor(pos[1])
+	pos[2] = math.floor(pos[2])
+	
+	if fireMode ~= self.fireModeLast then
+		self.selPos = false
+		self.selMove = false
+		self.selMake = false
+		self.cursorDisplay = false
+	end
+	
+	if fireMode ~= "alt" and fireMode ~= "primary" and storage.points then
+		self.b_l = pos[1] == storage.points[1] and pos[2] >= storage.points[2] and pos[2] < storage.points[4]
+		self.b_r = pos[1] == storage.points[3] - 1 and pos[2] >= storage.points[2] and pos[2] < storage.points[4]
+		self.b_d = pos[2] == storage.points[2] and pos[1] >= storage.points[1] and pos[1] < storage.points[3]
+		self.b_u = pos[2] == storage.points[4] - 1 and pos[1] >= storage.points[1] and pos[1] < storage.points[3]
+	end
+	
 	if fireMode == "primary"
 		--and fireMode ~= self.fireModeLast
 	then
-		pos[1] = math.floor(pos[1])
-		pos[2] = math.floor(pos[2])
+		if not storage.points then storage.points = {pos[1],pos[2],pos[1],pos[2]} end
 		
-		if pos[1] <= storage.points[3] then
-			storage.points[1] = pos[1]
-		else
-			storage.points[1] = storage.points[3]+1
-			storage.points[3] = pos[1]
-		end
+		if ((pos[1] < storage.points[1]
+			or pos[2] < storage.points[2] 
+			or pos[1] > storage.points[3] - 1
+			or pos[2] > storage.points[4] - 1)
+			and not (self.b_l or self.b_r or self.b_d or self.b_u)
+			and not self.selMove) or self.selMake -- not inside selection, not currently moving a border or the whole rect, or already making one
+		then
+			if not self.selPos then self.selPos = pos end
+			if self.selPos[1] > pos[1] then
+				storage.points[1] = pos[1]
+				storage.points[3] = self.selPos[1]+1
+			else
+				storage.points[1] = self.selPos[1]
+				storage.points[3] = pos[1]+1
+			end
 			
-		if pos[2] <= storage.points[4] then
-			storage.points[2] = pos[2]
+			if self.selPos[2] > pos[2] then
+				storage.points[2] = pos[2]
+				storage.points[4] = self.selPos[2]+1
+			else
+				storage.points[2] = self.selPos[2]
+				storage.points[4] = pos[2]+1
+			end
+			self.selMake = true
 		else
-			storage.points[2] = storage.points[4]+1
-			storage.points[4] = pos[2]
+			if self.b_r and pos[1] >= storage.points[1] then --moving sides/edges
+				storage.points[3] = pos[1]+1
+			end
+			if self.b_l and pos[1] < storage.points[3] then
+				storage.points[1] = pos[1]
+			end
+			if self.b_u and pos[2] >= storage.points[2] then
+				storage.points[4] = pos[2]+1
+			end
+			if self.b_d and pos[2] < storage.points[4] then
+				storage.points[2] = pos[2]
+			end
+			if not (self.b_l or self.b_r or self.b_d or self.b_u) -- not on edges
+				and ((pos[1] >= storage.points[1] and pos[1] < storage.points[3] and pos[2] >= storage.points[2] and pos[2] < storage.points[4]) or self.selMove) --within the rectangle or already moving it, duh
+			then --moving the whole rectangle
+				if not self.selPos then self.selPos = pos end
+				self.selMove = true
+				local x = pos[1] - self.selPos[1]
+				local y = pos[2] - self.selPos[2]
+				
+				storage.points[1] = storage.points[1] + x
+				storage.points[2] = storage.points[2] + y
+				storage.points[3] = storage.points[3] + x
+				storage.points[4] = storage.points[4] + y
+			end
 		end
+		if self.selMove then
+			self.selPos = pos
+		end
+		self.cursorDisplay = string.format("%s x %s",storage.points[3]-storage.points[1],storage.points[4]-storage.points[2])
 	end
 	
 	if fireMode == "alt"
+		and storage.points
 		--and fireMode ~= self.fireModeLast
 	then
-		pos[1] = math.floor(pos[1]+1)
-		pos[2] = math.floor(pos[2]+1)
-		
-		if pos[1] >= storage.points[1] then
-			storage.points[3] = pos[1]
-		else
-			storage.points[3] = storage.points[1]-1
-			storage.points[1] = pos[1]
-		end
-			
-		if pos[2] >= storage.points[2] then
-			storage.points[4] = pos[2]
-		else
-			storage.points[4] = storage.points[2]-1
-			storage.points[2] = pos[2]
-		end
+		storage.points = false
 	end
 end
 
@@ -541,6 +696,7 @@ function BeamFire:paint_2_5(fireMode) -- fill/empty mask
 	
 end
 
+
 function BeamFire:paint_2_6(fireMode) -- invert mask
 	if not storage.points then return false end
 	if not storage.maskData then storage.maskData = {} end
@@ -576,6 +732,7 @@ function BeamFire:uninit()
 	self:reset()
 	--sb.logInfo(sb.printJson(storage.maskData))
 	world.sendEntityMessage(activeItem.ownerEntityId(),"removeBar","PaintToolBar")
+	--world.sendEntityMessage(activeItem.ownerEntityId(),"removeBar","randombar")
 end
 
 function BeamFire:reset()
