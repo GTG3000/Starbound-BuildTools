@@ -1,26 +1,17 @@
 require "/scripts/interp.lua"
 require "/scripts/vec2.lua"
 require "/scripts/util.lua"
+require "/scripts/toolframework.lua"
 
-BeamFire = WeaponAbility:new()
+BeamFire = Framework:new()
 
 function BeamFire:init()
-	activeItem.setInstanceValue("retainScriptStorageInItem",true)
+	self:frameworkInit()
 	self.damageConfig.baseDamage = self.baseDps * self.fireTime
 
 	self.weapon:setStance(self.stances.idle)
 
-	self.cooldownTimer = 0
-	self.doubletapTimer = 0
 	self.fireModeLast = false
-
-	self.weapon.onLeaveAbility = function()
-		self.weapon:setDamage()
-		activeItem.setScriptedAnimationParameter("chains", {})
-		animator.setParticleEmitterActive("beamCollision", false)
-		animator.stopAllSounds("fireLoop")
-		self.weapon:setStance(self.stances.idle)
-	end
 	
 	storage.colourIndex = storage.colourIndex or 1
 	
@@ -35,20 +26,23 @@ function BeamFire:init()
 	end]]
 	
 	--bottom left x, bottom left y, top right x, top right y
-	storage.points = storage.points or {math.floor(aimpos[1]),math.floor(aimpos[2]),math.floor(aimpos[1]),math.floor(aimpos[2])}
+	storage.points = storage.points or false --{math.floor(aimpos[1]),math.floor(aimpos[2]),math.floor(aimpos[1]),math.floor(aimpos[2])}
 	
 	storage.storedData = storage.storedData or false
 	storage.flipY = storage.flipY or false
 	storage.flipX = storage.flipY or false
 	
 	
-	--chain settings (overriding aegisaltpistol defaults)
-	self.chain.renderLayer = "ForegroundOverlay"
-	self.chain.segmentSize = 2
-	self.chain.waveform = nil
-	self.chain.endSegmentImage = nil
-	self.chain.overdrawLength = 0
-	self.bSegment = "/particles/treestems/wood.png"
+	self.modeMax = {2,2} -- normal, mask
+	storage.mode = storage.mode or 1
+	storage.altMode = storage.altMode or 1
+	storage.modeMask = storage.modeMask or 1
+	self.funcName = "paint"
+	
+	self.modeFriendly = {
+		{"Copying","Pasting"},
+		{"Selecting","Inverting"}
+	}
 	
 	self.colours 	= {"808080","ff0000","ff8000","ffff00","00ff00","0000ff","d22dc1","ffffff","101010"}
 	self.cValue 	= {0,1,5,4,3,2,6,8,7}
@@ -59,13 +53,8 @@ function BeamFire:init()
 	
 	self.modes = {"Selecting","Copying","Pasting","Flipping","Preview"}
 	
-	self.modeMax = 4
-	storage.modeIndex = storage.modeIndex or 1
-	
 	
 	--preview and shift-holding related stuff
-	self.shiftDelay = 1.5 --hold shift for x to make preview appear
-	self.shiftTimer = 0
 	self.cooldown = 0
 	self.cooldownValue = 1 --spawn preview projectile every x seconds, with particles lasting for x seconds
 	self.bPreview = false
@@ -75,7 +64,6 @@ end
 function BeamFire:update(dt, fireMode, shiftHeld)
 	WeaponAbility.update(self, dt, fireMode, shiftHeld)	
 	
-	
 	local beamStart = self:firePosition()
 	local beamEnd = activeItem.ownerAimPosition()
 	
@@ -84,41 +72,27 @@ function BeamFire:update(dt, fireMode, shiftHeld)
 
 	self:render(beamEnd)
 	
-	if shiftHeld then
-		self.shiftTimer = math.min(self.shiftTimer + dt,self.shiftDelay)
-		self.shiftPressed = true
-	else
-		if self.shiftTimer < 0.5 and self.shiftPressed then		
-			storage.modeIndex = storage.modeIndex % self.modeMax +1
-			storage.colourIndex = math.min(storage.modeIndex,9)
-			self.shiftPressed = true
-		end
-		self.shiftTimer = 0
-		self.bPreview = false
-	end
-	
-	if self.shiftTimer == self.shiftDelay and not self.bPreview then
-		self.bPreview = true
-		--self:preview()
-	end
-	
 	if self.bPreview then
-		if self.cooldown < self.cooldownValue then
-			self.cooldown = self.cooldown + dt
+		if self.cooldown > 0  then
+			self.cooldown = self.cooldown - dt
 		else
-			self.cooldown = 0
+			self.cooldown = self.cooldownValue
 			self:preview()
 		end
 	end
 	
-	sb.setLogMap("^pink;TOOLSTATE^reset;",self.modes[storage.modeIndex])
-	sb.setLogMap("^pink;FLIPPING^reset;",(storage.flipX and "horizontally" or "").." "..(storage.flipY and "vertically" or ""))
+	--sb.setLogMap("^pink;TOOLSTATE^reset;",self.modes[storage.modeIndex])
+	--sb.setLogMap("^pink;FLIPPING^reset;",(storage.flipX and "horizontally" or "").." "..(storage.flipY and "vertically" or ""))
 	
-	BeamFire["paint_"..storage.modeIndex](self,dt, fireMode, shiftHeld)
+	--BeamFire["paint_"..storage.modeIndex](self,dt, fireMode, shiftHeld)
+	self:frameworkUpdate(dt, fireMode, shiftHeld)
+	self.bPreview = self.bPreview and shiftHeld
+	
+end
 
-	self.fireModeLast = fireMode
-	self.shiftPressed = shiftHeld and self.shiftPressed
-	self.movePressed = self.movePressed and moves.up
+function BeamFire:shift_hold()
+	self.bPreview = true
+	self.cooldown = 0
 end
 
 function BeamFire:render(endPos)
@@ -137,94 +111,44 @@ function BeamFire:render(endPos)
 	newChain.segmentSize = length
 	newChain.segmentImage = self.bSegment.."?setcolor="..self.colours[storage.colourIndex].."?scale="..tostring(length*8)..";2;"
 	
-	table.insert(chains,newChain)
+	table.insert(chains,newChain)	
 	
-	local nC1 = copy(self.chain)
-	local nC2 = copy(self.chain)
-	local nC3 = copy(self.chain)
-	local nC4 = copy(self.chain)
 	
-	local l1 = world.magnitude({storage.points[1],storage.points[2]},{storage.points[1],storage.points[4]+1})
-	local l2 = world.magnitude({storage.points[1],storage.points[4]+1},{storage.points[3]+1,storage.points[4]+1})
+	if storage.points then
+		local s_rect = {} --rectangle for highlighting selection modification
 	
-	nC1.segmentSize = l1
-	nC2.segmentSize = l2
-	nC3.segmentSize = l1
-	nC4.segmentSize = l2
+		--has to change if the coursor is over one of the edges or corners	
+		if self.b_r and self.b_u then
+			s_rect = {storage.points[3],storage.points[4],storage.points[3]+1,storage.points[4]+1}
+		elseif self.b_r and self.b_d then
+			s_rect = {storage.points[3],storage.points[2],storage.points[3]+1,storage.points[2]+1}
+		elseif self.b_l and self.b_u then
+			s_rect = {storage.points[1],storage.points[4],storage.points[1]+1,storage.points[4]+1}
+		elseif self.b_l and self.b_d then
+			s_rect = {storage.points[1],storage.points[2],storage.points[1]+1,storage.points[2]+1}
+		elseif self.b_r then
+			s_rect = {storage.points[3],storage.points[2],storage.points[3]+1,storage.points[4]+1}
+		elseif self.b_l then
+			s_rect = {storage.points[1],storage.points[2],storage.points[1]+1,storage.points[4]+1}
+		elseif self.b_u then
+			s_rect = {storage.points[1],storage.points[4],storage.points[3]+1,storage.points[4]+1}
+		elseif self.b_d then
+			s_rect = {storage.points[1],storage.points[2],storage.points[3]+1,storage.points[2]+1}
+		end
 	
-	nC1.segmentImage = self.bSegment.."?setcolor="..self.colours[storage.colourIndex].."?scale="..tostring(l1*8)..";2;"
-	nC2.segmentImage = self.bSegment.."?setcolor="..self.colours[storage.colourIndex].."?scale="..tostring(l2*8)..";2;"
-	nC3.segmentImage = self.bSegment.."?setcolor="..self.colours[storage.colourIndex].."?scale="..tostring(l1*8)..";2;"
-	nC4.segmentImage = self.bSegment.."?setcolor="..self.colours[storage.colourIndex].."?scale="..tostring(l2*8)..";2;"
-	
-	--current selection rectangle
-	nC1.startPosition = {storage.points[1],storage.points[2]}
-	nC1.startOffset = nil														
-	nC1.endPosition = {storage.points[1],storage.points[4]+1}
-	
-	nC2.startPosition = {storage.points[1],storage.points[4]+1}
-	nC2.startOffset = nil
-	nC2.endPosition = {storage.points[3]+1,storage.points[4]+1}
-	
-	nC3.startPosition = {storage.points[3]+1,storage.points[4]+1}
-	nC3.startOffset = nil
-	nC3.endPosition = {storage.points[3]+1,storage.points[2]}
-	
-	nC4.startPosition = {storage.points[3]+1,storage.points[2]}
-	nC4.startOffset = nil
-	nC4.endPosition = {storage.points[1],storage.points[2]}
-	--current selection end
-	table.insert(chains,nC1)
-	table.insert(chains,nC2)
-	table.insert(chains,nC3)
-	table.insert(chains,nC4)
+		if #s_rect>0 then
+			self:renderBox(s_rect,chains,"?setcolor=FFFF00")
+		end
+		
+		self:renderBox({storage.points[1],storage.points[2],storage.points[3]+1,storage.points[4]+1},chains,"?setcolor=ffa000;")
+	end
 	
 	--stored selection rectangle
 	if storage.storedData and storage.storedData[1] then
 		local sizeX = #storage.storedData
 		local sizeY = #storage.storedData[1]
-	
-		l1 = world.magnitude({storage.points[1],storage.points[2]},{storage.points[1],storage.points[2]+sizeY})
-		l2 = world.magnitude({storage.points[1],storage.points[2]+sizeY},{storage.points[1]+sizeX,storage.points[2]+sizeY})
-	
-		--self.chain.segmentImage = self.bSegment.."?setcolor=ff5a00?multiply=ffffff80"
 		
-		nC1 = copy(self.chain)
-		nC2 = copy(self.chain)
-		nC3 = copy(self.chain)
-		nC4 = copy(self.chain)
-	
-		nC1.segmentSize = l1
-		nC2.segmentSize = l2
-		nC3.segmentSize = l1
-		nC4.segmentSize = l2
-	
-		nC1.segmentImage = self.bSegment.."?setcolor=ff5a00?scale="..tostring(l1*8)..";1?multiply=ffffff80"
-		nC2.segmentImage = self.bSegment.."?setcolor=ff5a00?scale="..tostring(l2*8)..";1?multiply=ffffff80"
-		nC3.segmentImage = self.bSegment.."?setcolor=ff5a00?scale="..tostring(l1*8)..";1?multiply=ffffff80"
-		nC4.segmentImage = self.bSegment.."?setcolor=ff5a00?scale="..tostring(l2*8)..";1?multiply=ffffff80"
-		
-		
-		nC1.startPosition = {storage.points[1],storage.points[2]}
-		nC1.startOffset = nil														
-		nC1.endPosition = {storage.points[1],storage.points[2]+sizeY}
-		
-		nC2.startPosition = {storage.points[1],storage.points[2]+sizeY}
-		nC2.startOffset = nil
-		nC2.endPosition = {storage.points[1]+sizeX,storage.points[2]+sizeY}
-		
-		nC3.startPosition = {storage.points[1]+sizeX,storage.points[2]+sizeY}
-		nC3.startOffset = nil
-		nC3.endPosition = {storage.points[1]+sizeX,storage.points[2]}
-		
-		nC4.startPosition = {storage.points[1]+sizeX,storage.points[2]}
-		nC4.startOffset = nil
-		nC4.endPosition = {storage.points[1],storage.points[2]}
-		
-		table.insert(chains,nC1)
-		table.insert(chains,nC2)
-		table.insert(chains,nC3)
-		table.insert(chains,nC4)
+		self:renderBox({storage.points[1],storage.points[2],storage.points[1]+sizeX,storage.points[2]+sizeY},chains,"?setcolor=ff5a00?multiply=ffffff80")
 	end
 	--stored selection rectangle ]]
 	
@@ -324,54 +248,9 @@ function BeamFire:firePosition()
 	return vec2.add(mcontroller.position(), activeItem.handPosition(self.weapon.muzzleOffset))
 end
 
-function BeamFire:paint_1(dt, fireMode, shiftHeld) --setting position
 
-	if fireMode == "primary"
-		--and fireMode ~= self.fireModeLast
-	then
-		local pos = activeItem.ownerAimPosition()
-		pos[1] = math.floor(pos[1])
-		pos[2] = math.floor(pos[2])
-		
-		if pos[1] <= storage.points[3] then
-			storage.points[1] = pos[1]
-		else
-			storage.points[1] = storage.points[3]+1
-			storage.points[3] = pos[1]
-		end
-			
-		if pos[2] <= storage.points[4] then
-			storage.points[2] = pos[2]
-		else
-			storage.points[2] = storage.points[4]+1
-			storage.points[4] = pos[2]
-		end
-	end
-	
-	if fireMode == "alt"
-		--and fireMode ~= self.fireModeLast
-	then
-		local pos = activeItem.ownerAimPosition()
-		pos[1] = math.floor(pos[1])
-		pos[2] = math.floor(pos[2])
-		
-		if pos[1] >= storage.points[1] then
-			storage.points[3] = pos[1]
-		else
-			storage.points[3] = storage.points[1]-1
-			storage.points[1] = pos[1]
-		end
-			
-		if pos[2] >= storage.points[2] then
-			storage.points[4] = pos[2]
-		else
-			storage.points[4] = storage.points[2]-1
-			storage.points[2] = pos[2]
-		end
-	end
-end
-
-function BeamFire:paint_2(dt, fireMode, shiftHeld) --copying
+function BeamFire:paint_1_1(fireMode) --copying
+	if not storage.points then return false end
 	if fireMode == "primary" 
 		and fireMode ~= self.fireModeLast 
 	then	
@@ -398,8 +277,9 @@ function BeamFire:paint_2(dt, fireMode, shiftHeld) --copying
 	
 end
 
-function BeamFire:paint_3(dt, fireMode, shiftHeld) --pasting
 
+function BeamFire:paint_1_2(fireMode) --pasting
+	if not storage.points then return false end
 	if fireMode == "primary"
 		and fireMode ~= self.fireModeLast
 		and storage.storedData
@@ -453,7 +333,98 @@ function BeamFire:paint_3(dt, fireMode, shiftHeld) --pasting
 	end
 end
 
-function BeamFire:paint_4(dt, fireMode, shiftHeld) --flipping
+
+function BeamFire:paint_2_1(fireMode) --setting position
+	local pos = activeItem.ownerAimPosition()
+	pos[1] = math.floor(pos[1])
+	pos[2] = math.floor(pos[2])
+	
+	if fireMode ~= self.fireModeLast then
+		self.selPos = false
+		self.selMove = false
+		self.selMake = false
+		self.cursorDisplay = false
+	end
+	
+	if fireMode ~= "alt" and fireMode ~= "primary" and storage.points then
+		self.b_l = pos[1] == storage.points[1] and pos[2] >= storage.points[2] and pos[2] <= storage.points[4]
+		self.b_r = pos[1] == storage.points[3] and pos[2] >= storage.points[2] and pos[2] <= storage.points[4]
+		self.b_d = pos[2] == storage.points[2] and pos[1] >= storage.points[1] and pos[1] <= storage.points[3]
+		self.b_u = pos[2] == storage.points[4] and pos[1] >= storage.points[1] and pos[1] <= storage.points[3]
+	end
+	
+	if fireMode == "primary"
+		--and fireMode ~= self.fireModeLast
+	then
+		if not storage.points then storage.points = {pos[1],pos[2],pos[1],pos[2]} end
+		
+		if ((pos[1] < storage.points[1]
+			or pos[2] < storage.points[2] 
+			or pos[1] > storage.points[3]
+			or pos[2] > storage.points[4])
+			and not (self.b_l or self.b_r or self.b_d or self.b_u)
+			and not self.selMove) or self.selMake -- not inside selection, not currently moving a border or the whole rect, or already making one
+		then
+			if not self.selPos then self.selPos = pos end
+			if self.selPos[1] > pos[1] then
+				storage.points[1] = pos[1]
+				storage.points[3] = self.selPos[1]
+			else
+				storage.points[1] = self.selPos[1]
+				storage.points[3] = pos[1]
+			end
+			
+			if self.selPos[2] > pos[2] then
+				storage.points[2] = pos[2]
+				storage.points[4] = self.selPos[2]
+			else
+				storage.points[2] = self.selPos[2]
+				storage.points[4] = pos[2]
+			end
+			self.selMake = true
+		else
+			if self.b_r and pos[1] >= storage.points[1] then --moving sides/edges
+				storage.points[3] = pos[1]
+			end
+			if self.b_l and pos[1] <= storage.points[3] then
+				storage.points[1] = pos[1]
+			end
+			if self.b_u and pos[2] >= storage.points[2] then
+				storage.points[4] = pos[2]
+			end
+			if self.b_d and pos[2] <= storage.points[4] then
+				storage.points[2] = pos[2]
+			end
+			if not (self.b_l or self.b_r or self.b_d or self.b_u) -- not on edges
+				and ((pos[1] >= storage.points[1] and pos[1] <= storage.points[3] and pos[2] >= storage.points[2] and pos[2] <= storage.points[4]) or self.selMove) --within the rectangle or already moving it, duh
+			then --moving the whole rectangle
+				if not self.selPos then self.selPos = pos end
+				self.selMove = true
+				local x = pos[1] - self.selPos[1]
+				local y = pos[2] - self.selPos[2]
+				
+				storage.points[1] = storage.points[1] + x
+				storage.points[2] = storage.points[2] + y
+				storage.points[3] = storage.points[3] + x
+				storage.points[4] = storage.points[4] + y
+			end
+		end
+		if self.selMove then
+			self.selPos = pos
+		end
+		self.cursorDisplay = string.format("%s x %s",storage.points[3]-storage.points[1]+1,storage.points[4]-storage.points[2]+1)
+	end
+	
+	if fireMode == "alt"
+		and storage.points
+		--and fireMode ~= self.fireModeLast
+	then
+		storage.points = false
+	end
+end
+
+
+function BeamFire:paint_2_2(fireMode) --flipping
 	if fireMode == "primary"
 		and fireMode ~= self.fireModeLast
 	then
@@ -466,7 +437,12 @@ function BeamFire:paint_4(dt, fireMode, shiftHeld) --flipping
 		storage.flipY = not storage.flipY
 	end
 	
+	if fireMode~= self.fireModeLast then
+		self.cursorDisplay = "Flip "..(storage.flipX and "horizontal " or "")..(storage.flipY and "vertical" or "")
+	end
+	
 end
+
 
 function BeamFire:flipX(iterator, size, flip)
 	if flip then
@@ -485,16 +461,6 @@ function BeamFire:flipY(iterator, size, flip)
 end
 
 function BeamFire:uninit()
-	self:reset()
-	sb.setLogMap("^pink;TOOLSTATE^reset;","")
-	sb.setLogMap("^pink;FLIPPING^reset;","")
-end
-
-function BeamFire:reset()
-	self.weapon:setDamage()
-	activeItem.setScriptedAnimationParameter("chains", {})
-	animator.setParticleEmitterActive("beamCollision", false)
-	animator.stopAllSounds("fireStart")
-	animator.stopAllSounds("fireLoop")
+	self:frameworkUnInit()
 end
 
