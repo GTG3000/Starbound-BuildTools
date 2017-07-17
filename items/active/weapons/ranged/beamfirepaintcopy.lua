@@ -144,7 +144,7 @@ function BeamFire:render(endPos)
 	end
 	
 	--stored selection rectangle
-	if storage.storedData and storage.storedData[1] then
+	if storage.storedData and storage.storedData[1] and storage.points then
 		local sizeX = #storage.storedData
 		local sizeY = #storage.storedData[1]
 		
