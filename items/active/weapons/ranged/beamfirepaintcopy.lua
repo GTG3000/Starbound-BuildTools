@@ -112,7 +112,7 @@ function BeamFire:render(endPos)
 	newChain.segmentImage = self.bSegment.."?setcolor="..self.colours[storage.colourIndex].."?scale="..tostring(length*8)..";2;"
 	
 	table.insert(chains,newChain)	
-	
+	self:renderBox({endPos[1]-0.5,endPos[2]-0.5,endPos[1]+0.5,endPos[2]+0.5},chains,"?setcolor=808080")
 	
 	if storage.points then
 		local s_rect = {} --rectangle for highlighting selection modification
@@ -396,7 +396,7 @@ function BeamFire:paint_2_1(fireMode) --setting position
 				storage.points[2] = pos[2]
 			end
 			if not (self.b_l or self.b_r or self.b_d or self.b_u) -- not on edges
-				and ((pos[1] >= storage.points[1] and pos[1] <= storage.points[3] and pos[2] >= storage.points[2] and pos[2] <= storage.points[4]) or self.selMove) --within the rectangle or already moving it, duh
+				and ((pos[1] > storage.points[1] and pos[1] < storage.points[3] and pos[2] > storage.points[2] and pos[2] < storage.points[4]) or self.selMove) --within the rectangle or already moving it, duh
 			then --moving the whole rectangle
 				if not self.selPos then self.selPos = pos end
 				self.selMove = true
